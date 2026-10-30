@@ -1,9 +1,7 @@
 use crate::core::error::SpecmanError;
 use crate::graph::tree::{DependencyMapping, FilesystemDependencyMapper};
 use crate::storage::persistence::WorkspacePersistence;
-use crate::templates::catalog::TemplateCatalog;
-use crate::templates::engine::{MarkdownTemplateEngine, TemplateEngine};
-use crate::workspace::{FilesystemWorkspaceLocator, WorkspaceLocator};
+use crate::workspace::FilesystemWorkspaceLocator;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -13,10 +11,8 @@ pub type DefaultPersistence = WorkspacePersistence<DefaultWorkspaceLocator>;
 /// Shared environment components for Specman operations.
 /// Holds the necessary state and services to perform artifact management.
 pub struct SpecmanEnv {
-    pub catalog: TemplateCatalog,
     pub persistence: DefaultPersistence,
     pub mapping: Arc<dyn DependencyMapping>,
-    pub templates: Arc<dyn TemplateEngine>,
 }
 
 impl SpecmanEnv {
@@ -34,18 +30,12 @@ impl SpecmanEnv {
 
     /// Create a new environment with an explicit locator.
     pub fn new(locator: DefaultWorkspaceLocator) -> Result<Self, SpecmanError> {
-        let workspace = locator.workspace()?;
-
         let mapper = FilesystemDependencyMapper::new(locator.clone());
-        let catalog = TemplateCatalog::new(workspace);
         let persistence = WorkspacePersistence::new(locator.clone());
-        let templates = MarkdownTemplateEngine::new();
 
         Ok(Self {
-            catalog,
             persistence,
             mapping: Arc::new(mapper),
-            templates: Arc::new(templates),
         })
     }
 }

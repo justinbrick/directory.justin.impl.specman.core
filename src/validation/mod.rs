@@ -64,21 +64,32 @@ pub struct ComplianceReport {
 }
 
 /// Parses `[ENSURES: <id>:<type>]` tags from text content.
+///
+/// The `ENSURES` keyword is case-insensitive. The optional type is `TEST` (the default),
+/// `CHECK`, or `MANUAL`.
 pub fn parse_tags(content: &str, file_path: &Path) -> Vec<ValidationTag> {
+    fn is_ensures_keyword(s: &str) -> bool {
+        const KEYWORD: &str = "ENSURES:";
+        s.get(..KEYWORD.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(KEYWORD))
+    }
+
     let mut tags = Vec::new();
     for (line_index, line) in content.lines().enumerate() {
         let mut cursor = 0;
-        while let Some(start_rel) = line[cursor..].find("[ENSURES:") {
-            let start = cursor + start_rel;
-            let Some(rel_end) = line[start..].find(']') else {
+        while let Some(bracket_rel) = line[cursor..].find('[') {
+            let bracket = cursor + bracket_rel;
+            let after_bracket = &line[bracket + 1..];
+            if !is_ensures_keyword(after_bracket) {
+                cursor = bracket + 1;
+                continue;
+            }
+
+            let Some(rel_end) = after_bracket.find(']') else {
                 break;
             };
-            let end = start + rel_end;
-            let inner = &line[start + 1..end];
-            let Some(body) = inner.strip_prefix("ENSURES:") else {
-                cursor = end + 1;
-                continue;
-            };
+            let end = bracket + 1 + rel_end;
+            let body = &after_bracket["ENSURES:".len()..rel_end];
 
             let mut parts = body.trim().split(':');
             let Some(identifier) = parts.next().map(str::trim) else {
@@ -88,7 +99,10 @@ pub fn parse_tags(content: &str, file_path: &Path) -> Vec<ValidationTag> {
             let tag_type = match parts.next().map(str::trim) {
                 Some("CHECK") => ValidationType::Check,
                 Some("MANUAL") => ValidationType::Manual,
-                _ => ValidationType::Test,
+                Some("TEST") | None => ValidationType::Test,
+                // Unrecognized types fall back to the default test type, matching the
+                // specification's default-behavior rule while remaining permissive.
+                Some(_) => ValidationType::Test,
             };
 
             tags.push(ValidationTag {
@@ -105,35 +119,45 @@ pub fn parse_tags(content: &str, file_path: &Path) -> Vec<ValidationTag> {
     tags
 }
 
-/// Recursively scans a source root for validation tags, skipping binary files and `.git`.
+/// Recursively scans a source root for validation tags, respecting `.gitignore` rules,
+/// skipping hidden files and directories, binary files, and the `target`/`.specman`/`.git`
+/// directories.
 pub fn scan_source_root(root: &Path) -> Result<Vec<ValidationTag>, SpecmanError> {
     let mut tags = Vec::new();
-    scan_dir(root, &mut tags)?;
-    Ok(tags)
-}
 
-fn scan_dir(dir: &Path, tags: &mut Vec<ValidationTag>) -> Result<(), SpecmanError> {
-    for entry in fs::read_dir(dir).map_err(SpecmanError::Io)? {
-        let entry = entry.map_err(SpecmanError::Io)?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name == ".git" || name == ".specman" || name == "target" {
+    let walker = ignore::WalkBuilder::new(root)
+        .hidden(false)
+        .ignore(false)
+        .git_ignore(true)
+        .git_global(false)
+        .git_exclude(false)
+        .require_git(false)
+        .filter_entry(|entry| {
+            let name = entry.file_name().to_string_lossy();
+            name != "target" && name != ".specman" && name != ".git"
+        })
+        .build();
+
+    for entry in walker {
+        let entry = entry.map_err(|err| {
+            SpecmanError::Workspace(format!("failed to scan {}: {err}", root.display()))
+        })?;
+
+        if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
-        if path.is_dir() {
-            scan_dir(&path, tags)?;
-        } else if path.is_file() {
-            let bytes = fs::read(&path).map_err(SpecmanError::Io)?;
-            if is_binary(&bytes) {
-                continue;
-            }
-            if let Ok(content) = String::from_utf8(bytes) {
-                tags.extend(parse_tags(&content, &path));
-            }
+
+        let path = entry.path();
+        let bytes = fs::read(path).map_err(SpecmanError::Io)?;
+        if is_binary(&bytes) {
+            continue;
+        }
+        if let Ok(content) = String::from_utf8(bytes) {
+            tags.extend(parse_tags(&content, path));
         }
     }
-    Ok(())
+
+    Ok(tags)
 }
 
 /// Builds a compliance report from a set of parsed tags and known constraint groups.
@@ -264,7 +288,7 @@ pub fn validate_workspace_status(
         } else {
             ArtifactKind::Implementation
         },
-        name: manifest.name.clone(),
+        name: manifest.name().to_string(),
     };
 
     let mut artifact_status = ArtifactStatus::default();
@@ -331,7 +355,7 @@ pub fn validate_workspace_status(
 }
 
 fn project_body(workspace: &WorkspacePaths, manifest: &SpecManProject) -> Option<PathBuf> {
-    match &manifest.spec {
+    match manifest.spec() {
         Some(spec) => spec
             .index
             .as_deref()
@@ -381,7 +405,7 @@ fn governing_constraints(
     workspace: &WorkspacePaths,
     manifest: &SpecManProject,
 ) -> Result<Vec<String>, SpecmanError> {
-    let Some(impl_) = &manifest.impl_ else {
+    let Some(impl_) = manifest.impl_() else {
         return Ok(Vec::new());
     };
 
@@ -389,11 +413,7 @@ fn governing_constraints(
     for entry in &impl_.implements {
         let cache_dir = crate::install::ensure_reference(&entry.ref_, workspace)?;
         let spec_manifest = load_manifest(&cache_dir.join("specman.json"))?;
-        if let Some(index) = spec_manifest
-            .spec
-            .as_ref()
-            .and_then(|spec| spec.index.as_deref())
-        {
+        if let Some(index) = spec_manifest.spec().and_then(|spec| spec.index.as_deref()) {
             let body = cache_dir.join(index);
             if body.is_file() {
                 let content = fs::read_to_string(&body).map_err(SpecmanError::Io)?;
@@ -432,6 +452,37 @@ mod tests {
         assert_eq!(tags[0].tag_type, ValidationType::Test);
         assert_eq!(tags[1].tag_type, ValidationType::Check);
         assert_eq!(tags[1].location.line_number, 2);
+    }
+
+    #[test]
+    fn parses_case_insensitive_ensures_keyword() {
+        let tags = parse_tags(
+            "// [ensures: concept-a.formatting:MANUAL]\n// [EnSuReS: concept-b.formatting]\n",
+            Path::new("lib.rs"),
+        );
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0].identifier, "concept-a.formatting");
+        assert_eq!(tags[0].tag_type, ValidationType::Manual);
+        // Omitted type defaults to TEST.
+        assert_eq!(tags[1].tag_type, ValidationType::Test);
+    }
+
+    #[test]
+    fn scanner_respects_gitignore() {
+        let temp = tempfile::tempdir().unwrap();
+        write(
+            &temp.path().join("src/lib.rs"),
+            "// [ENSURES: concept-a.formatting:TEST]\n",
+        );
+        write(
+            &temp.path().join("ignored/generated.rs"),
+            "// [ENSURES: concept-b.ordering:CHECK]\n",
+        );
+        write(&temp.path().join(".gitignore"), "/ignored\n");
+
+        let tags = scan_source_root(temp.path()).unwrap();
+        let ids: Vec<&str> = tags.iter().map(|t| t.identifier.as_str()).collect();
+        assert_eq!(ids, vec!["concept-a.formatting"]);
     }
 
     #[test]

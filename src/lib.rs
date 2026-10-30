@@ -7,7 +7,6 @@ pub(crate) mod markdown;
 pub(crate) mod metadata;
 pub(crate) mod ops;
 pub(crate) mod storage;
-pub(crate) mod templates;
 pub(crate) mod validation;
 pub(crate) mod workspace;
 
@@ -15,21 +14,26 @@ pub use core::env::SpecmanEnv;
 pub use core::error::{LifecycleError, SpecmanError};
 pub use core::shared::{EntityKind, SchemaRef, SemVer};
 pub use graph::tree::{
-    ArtifactId, ArtifactKind, ArtifactSummary, DependencyEdge, DependencyMapping,
-    DependencyRelation, DependencyTree, FilesystemDependencyMapper,
+    ArtifactId, ArtifactKind, ArtifactSummary, DependencyEdge, DependencyLocator,
+    DependencyMapping, DependencyRelation, DependencyTree, FilesystemDependencyMapper,
 };
 pub use index::{
     ArtifactKey, ArtifactRecord, ConstraintIdentifier, ConstraintRecord,
     FilesystemStructureIndexer, HeadingIdentifier, HeadingRecord, RelationshipEdge,
     RelationshipKind, StructureIndexing, StructureQuery, WorkspaceIndex, build_workspace_index,
 };
-pub use install::{cache_root, ensure_reference, install, parse_git_url, ref_name, resolve_commit};
+pub use install::{
+    InstallResult, ReferenceKind, ensure_reference, install, load_lockfile, parse_git_url,
+    resolve_commit,
+};
 pub use manifest::{
-    GitReference, ImplProject, ImplementsEntry, SpecManProject, SpecProject, UtilizesEntry,
-    load_manifest, parse_manifest, validate_manifest_value,
+    GitReference, GitReferenceAlias, GitReferenceUrl, ImplProject, ImplementsEntry, LockedEntry,
+    LockedEntryResolved, Lockfile, OverrideEntry, OverrideEntryRef, OverrideEntrySite,
+    SpecManProject, SpecManProjectManifest, SpecProject, UtilizesEntry, load_manifest,
+    parse_manifest, validate_manifest_value,
 };
 pub use metadata::{
-    IdentityUpdate, ImplementationUpdate, ManifestUpdate, SpecificationUpdate,
+    IdentityUpdate, ImplementationUpdate, ManifestUpdate, OverridesUpdate, SpecificationUpdate,
     apply_manifest_update,
 };
 pub use ops::create::{
@@ -39,11 +43,6 @@ pub use ops::delete::{DeleteOptions, DeletePlan, DeleteResult, delete_artifact};
 pub use storage::adapter::{DataModelAdapter, InMemoryAdapter};
 pub use storage::persistence::{
     ArtifactRemovalStore, PersistedArtifact, RemovedArtifact, WorkspacePersistence,
-};
-pub use templates::catalog::{ResolvedTemplate, TemplateCatalog};
-pub use templates::engine::{
-    ImplContext, MarkdownTemplateEngine, RenderedTemplate, SpecContext, TemplateDescriptor,
-    TemplateEngine, TemplateLocator, TemplateProvenance, TemplateScenario, TemplateTier, TokenMap,
 };
 pub use validation::{
     ArtifactStatus, ComplianceReport, DiscoveredReference, HttpsValidationMode,

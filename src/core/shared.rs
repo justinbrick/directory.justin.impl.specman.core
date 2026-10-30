@@ -10,7 +10,6 @@ pub use semver::Version as SemVer;
 pub enum EntityKind {
     Specification,
     Implementation,
-    Template,
     Other(String),
 }
 

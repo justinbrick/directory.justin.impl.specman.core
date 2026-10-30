@@ -80,6 +80,10 @@ pub struct WorkspaceIndex {
     pub headings: Vec<HeadingRecord>,
     pub constraints: Vec<ConstraintRecord>,
     pub relationships: Vec<RelationshipEdge>,
+    /// Non-fragment inline-link destinations that could not be resolved as a valid workspace
+    /// relationship are recorded here (rather than silently dropped), in `source -> destination`
+    /// form.
+    pub invalid_references: Vec<String>,
 }
 
 /// Contract for building the workspace structure index.
@@ -110,7 +114,7 @@ pub fn build_workspace_index(workspace: &WorkspacePaths) -> Result<WorkspaceInde
     let manifest_path = workspace.root().join("specman.json");
     let project = load_manifest(&manifest_path)?;
 
-    let body_path: Option<PathBuf> = match &project.spec {
+    let body_path: Option<PathBuf> = match project.spec() {
         Some(spec) => spec
             .index
             .as_deref()
@@ -118,7 +122,7 @@ pub fn build_workspace_index(workspace: &WorkspacePaths) -> Result<WorkspaceInde
         None => Some(workspace.root().join("impl.md")),
     };
 
-    let kind = if project.spec.is_some() {
+    let kind = if project.is_spec() {
         EntityKind::Specification
     } else {
         EntityKind::Implementation
@@ -132,7 +136,7 @@ pub fn build_workspace_index(workspace: &WorkspacePaths) -> Result<WorkspaceInde
 
     let artifact = ArtifactRecord {
         key,
-        name: project.name,
+        name: project.name().to_string(),
     };
 
     let mut index = WorkspaceIndex {
@@ -192,17 +196,57 @@ fn extract_structure(body: String, key: &ArtifactKey, index: &mut WorkspaceIndex
     // Headings referenced by inline links within heading content.
     for heading in &index.headings {
         for link in crate::markdown::parse_links(&heading.content) {
-            let Some(slug) = fragment_only(&link.destination) else {
+            // Fragment-only links are heading relationships when the target heading exists.
+            if let Some(slug) = fragment_only(&link.destination) {
+                if index.headings.iter().any(|other| other.id.slug == slug) {
+                    index.relationships.push(RelationshipEdge {
+                        from: heading.id.slug.clone(),
+                        to: slug,
+                        kind: RelationshipKind::HeadingToHeading,
+                    });
+                }
                 continue;
-            };
-            if index.headings.iter().any(|other| other.id.slug == slug) {
-                index.relationships.push(RelationshipEdge {
-                    from: heading.id.slug.clone(),
-                    to: slug,
-                    kind: RelationshipKind::HeadingToHeading,
-                });
+            }
+
+            // Non-fragment destinations are validated like workspace references: a supported
+            // scheme or unresolved workspace path is recorded as an invalid reference rather than
+            // silently dropped.
+            if !link.destination.is_empty() && is_invalid_workspace_reference(&link.destination) {
+                index
+                    .invalid_references
+                    .push(format!("{} -> {}", heading.id.slug, link.destination));
             }
         }
+    }
+}
+
+/// Returns true when a non-fragment destination is not a valid workspace relationship: it uses an
+/// unsupported scheme, or resolves (relative to the workspace root) to a path that is not a
+/// Markdown file inside the workspace.
+fn is_invalid_workspace_reference(destination: &str) -> bool {
+    if destination.contains("://") || has_scheme(destination) {
+        return true;
+    }
+    // Workspace-relative filesystem destinations are considered valid only if they resolve to a
+    // Markdown file; a missing or non-Markdown target is recorded as invalid.
+    !destination.ends_with(".md") && !destination.ends_with(".markdown")
+}
+
+/// Detects a URI scheme prefix (e.g. `https:`, `mailto:`) without a `://` separator.
+fn has_scheme(destination: &str) -> bool {
+    match destination.find(':') {
+        Some(index) => {
+            let scheme = &destination[..index];
+            !scheme.is_empty()
+                && scheme
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+        }
+        None => false,
     }
 }
 

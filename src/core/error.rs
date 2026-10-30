@@ -3,13 +3,16 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use crate::graph::tree::ArtifactId;
+use crate::graph::tree::{ArtifactId, DependencyTree};
 
 /// Structured lifecycle failures surfaced by higher-level lifecycle orchestration.
 #[derive(Debug, Error)]
 pub enum LifecycleError {
     #[error("deletion blocked for {target}")]
-    DeletionBlocked { target: ArtifactId },
+    DeletionBlocked {
+        target: ArtifactId,
+        dependencies: DependencyTree,
+    },
     #[error("deletion plan target mismatch: request={requested}, plan={planned}")]
     PlanTargetMismatch {
         requested: ArtifactId,
@@ -26,8 +29,6 @@ pub enum LifecycleError {
 /// High-level error type shared across SpecMan components.
 #[derive(Debug, Error)]
 pub enum SpecmanError {
-    #[error("template error: {0}")]
-    Template(String),
     #[error("unknown work type: {0}")]
     UnknownWorkType(String),
     #[error("dependency error: {0}")]
@@ -53,7 +54,6 @@ impl From<serde_json::Error> for SpecmanError {
 impl SpecmanError {
     pub fn context<T: fmt::Display>(self, ctx: T) -> Self {
         match self {
-            SpecmanError::Template(msg) => SpecmanError::Template(format!("{ctx}: {msg}")),
             SpecmanError::UnknownWorkType(kind) => {
                 SpecmanError::UnknownWorkType(format!("{ctx}: {kind}"))
             }

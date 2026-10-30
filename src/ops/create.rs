@@ -5,9 +5,6 @@ use crate::core::env::SpecmanEnv;
 use crate::core::error::SpecmanError;
 use crate::manifest::{GitReference, ImplProject, ImplementsEntry, SpecManProject, SpecProject};
 use crate::storage::persistence::PersistedArtifact;
-use crate::templates::engine::{
-    RenderedTemplate, TemplateScenario, TokenMap,
-};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CreateSpecOptions {
@@ -25,46 +22,54 @@ pub struct CreateImplOptions {
     pub dry_run: bool,
 }
 
+/// The body rendered for a newly created artifact.
+#[derive(Clone, Debug)]
+pub struct CreatedBody {
+    pub body: String,
+}
+
 #[derive(Clone, Debug)]
 pub enum CreateResult {
     Persisted(PersistedArtifact),
-    DryRun(RenderedTemplate),
+    DryRun(CreatedBody),
+}
+
+/// Builds a minimal Markdown body for a new specification.
+fn specification_body(name: &str, title: &str) -> String {
+    format!(
+        "# {title}\n\n{}\n",
+        if name.is_empty() { title } else { name }
+    )
+}
+
+/// Builds a minimal Markdown body for a new implementation.
+fn implementation_body(name: &str) -> String {
+    format!("# {name}\n\nImplementation of `{name}`.\n")
 }
 
 pub fn create_specification(
     env: &SpecmanEnv,
     opts: CreateSpecOptions,
 ) -> Result<CreateResult, SpecmanError> {
-    // [ENSURES: concept-lifecycle-automation.requirements:CHECK]
-    let resolved = env.catalog.resolve(TemplateScenario::Specification)?;
-
-    let mut tokens = TokenMap::new();
-    tokens.insert(
-        "output_name".to_string(),
-        serde_json::Value::String(opts.name.clone()),
-    );
-    tokens.insert(
-        "title".to_string(),
-        serde_json::Value::String(opts.title.clone()),
-    );
-
-    let mut rendered = env.templates.render(&resolved.descriptor, &tokens)?;
-    rendered.provenance = Some(resolved.provenance);
+    let body = specification_body(&opts.name, &opts.title);
 
     if opts.dry_run {
-        return Ok(CreateResult::DryRun(rendered));
+        return Ok(CreateResult::DryRun(CreatedBody { body }));
     }
 
-    let project = SpecManProject {
+    let project = SpecManProject::Variant0 {
         name: opts.name,
-        spec: Some(SpecProject {
+        description: None,
+        overrides: Vec::new(),
+        schema: None,
+        spec: SpecProject {
             index: Some("spec.md".to_string()),
             references: Vec::new(),
-        }),
-        ..Default::default()
+        },
+        tags: Vec::new(),
     };
 
-    let persisted = env.persistence.persist_project(&project, &rendered.body)?;
+    let persisted = env.persistence.persist_project(&project, &body)?;
     Ok(CreateResult::Persisted(persisted))
 }
 
@@ -72,35 +77,27 @@ pub fn create_implementation(
     env: &SpecmanEnv,
     opts: CreateImplOptions,
 ) -> Result<CreateResult, SpecmanError> {
-    let resolved = env.catalog.resolve(TemplateScenario::Implementation)?;
-
-    let mut tokens = TokenMap::new();
-    tokens.insert(
-        "output_name".to_string(),
-        serde_json::Value::String(opts.name.clone()),
-    );
-
-    let mut rendered = env.templates.render(&resolved.descriptor, &tokens)?;
-    rendered.provenance = Some(resolved.provenance);
+    let body = implementation_body(&opts.name);
 
     if opts.dry_run {
-        return Ok(CreateResult::DryRun(rendered));
+        return Ok(CreateResult::DryRun(CreatedBody { body }));
     }
 
-    let project = SpecManProject {
+    let project = SpecManProject::Variant1 {
         name: opts.name,
-        impl_: Some(ImplProject {
+        description: None,
+        overrides: Vec::new(),
+        schema: None,
+        impl_: ImplProject {
             implements: vec![ImplementsEntry {
                 ref_: opts.target,
                 constraints: Vec::new(),
             }],
             utilizes: Vec::new(),
-        }),
-        ..Default::default()
+        },
+        tags: Vec::new(),
     };
 
-    let persisted = env.persistence.persist_project(&project, &rendered.body)?;
+    let persisted = env.persistence.persist_project(&project, &body)?;
     Ok(CreateResult::Persisted(persisted))
 }
-
-// Re-export the context types used by templates.

@@ -114,9 +114,20 @@ pub trait DependencyMapping: Send + Sync {
 }
 
 /// Filesystem-backed dependency mapper that traverses `specman.json` projects and resolves
-/// git references through the local `.specman/ref/` symlink directory and the global cache.
+/// git references into the in-tree `spec/{alias}/` materialization.
 pub struct FilesystemDependencyMapper<L: WorkspaceLocator> {
     workspace: L,
+}
+
+/// A locator used to identify the root of a dependency-tree traversal.
+#[derive(Clone, Debug)]
+pub enum DependencyLocator {
+    /// A path to a `specman.json` manifest.
+    Path(PathBuf),
+    /// A git reference, materialized (or cloned) under `spec/{alias}/`.
+    GitReference(crate::manifest::GitReference),
+    /// An alias resolved through the project lockfile to a nested `spec/...` path.
+    Alias(String),
 }
 
 impl<L: WorkspaceLocator> FilesystemDependencyMapper<L> {
@@ -132,6 +143,46 @@ impl<L: WorkspaceLocator> FilesystemDependencyMapper<L> {
         let workspace = self.workspace_paths()?;
         let project = load_manifest(path.as_ref())?;
         self.build_tree(project, workspace)
+    }
+
+    /// Builds a dependency tree from a normalized locator (a manifest path, a git reference, or
+    /// an alias resolved through the lockfile).
+    pub fn dependency_tree_from_locator(
+        &self,
+        locator: DependencyLocator,
+    ) -> Result<DependencyTree, SpecmanError> {
+        match locator {
+            DependencyLocator::Path(path) => self.dependency_tree_from_path(path),
+            DependencyLocator::GitReference(reference) => {
+                let workspace = self.workspace_paths()?;
+                let dir = crate::install::ensure_reference(&reference, &workspace)?;
+                self.dependency_tree_from_path(dir.join("specman.json"))
+            }
+            DependencyLocator::Alias(alias) => {
+                let workspace = self.workspace_paths()?;
+                let path = self.resolve_alias(&workspace, &alias)?;
+                self.dependency_tree_from_path(path)
+            }
+        }
+    }
+
+    /// Resolves an alias to its `specman.json` path via the lockfile (falling back to a direct
+    /// `spec/{alias}/specman.json` if no lockfile entry exists).
+    fn resolve_alias(
+        &self,
+        workspace: &WorkspacePaths,
+        alias: &str,
+    ) -> Result<PathBuf, SpecmanError> {
+        if let Some(lock) = crate::install::load_lockfile(workspace)? {
+            if let Some(entry) = lock.references.iter().find(|e| e.alias == alias) {
+                return Ok(workspace.root().join(&entry.path).join("specman.json"));
+            }
+        }
+        Ok(workspace
+            .root()
+            .join("spec")
+            .join(alias)
+            .join("specman.json"))
     }
 
     fn workspace_paths(&self) -> Result<WorkspacePaths, SpecmanError> {
@@ -274,20 +325,20 @@ where
 }
 
 fn summarize_project(project: &SpecManProject, resolved_path: Option<PathBuf>) -> ArtifactSummary {
-    let kind = if project.spec.is_some() {
+    let kind = if project.is_spec() {
         ArtifactKind::Specification
     } else {
         ArtifactKind::Implementation
     };
     let mut metadata = BTreeMap::new();
-    if let Some(description) = &project.description {
-        metadata.insert("description".to_string(), description.clone());
+    if let Some(description) = project.description() {
+        metadata.insert("description".to_string(), description.to_string());
     }
 
     ArtifactSummary {
         id: ArtifactId {
             kind,
-            name: project.name.clone(),
+            name: project.name().to_string(),
         },
         metadata,
         resolved_path: resolved_path.map(|p| p.to_string_lossy().to_string()),
@@ -295,7 +346,7 @@ fn summarize_project(project: &SpecManProject, resolved_path: Option<PathBuf>) -
 }
 
 fn references_of(project: &SpecManProject) -> Vec<(crate::manifest::GitReference, ArtifactKind)> {
-    match (&project.spec, &project.impl_) {
+    match (project.spec(), project.impl_()) {
         (Some(SpecProject { references, .. }), None) => references
             .iter()
             .cloned()

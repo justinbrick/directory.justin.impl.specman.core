@@ -5,7 +5,8 @@
 //! or unsupported), and validate them against the workspace boundary and heading
 //! slugs without mutating the source artifact.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -163,12 +164,48 @@ pub fn validate_reference_content(
     content: &str,
     options: &ReferenceValidationOptions,
 ) -> ReferenceValidationResult {
-    let root = workspace.root();
-    let source_dir = source_path.parent().unwrap_or(root);
-
     let mut references = Vec::new();
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    let mut visited = BTreeSet::new();
+
+    validate_reference_content_inner(
+        workspace,
+        source_path,
+        content,
+        options,
+        &mut references,
+        &mut errors,
+        &mut warnings,
+        &mut visited,
+    );
+
+    let status = if errors.is_empty() {
+        crate::validation::StatusResult::Pass
+    } else {
+        crate::validation::StatusResult::Fail
+    };
+
+    ReferenceValidationResult {
+        references,
+        errors,
+        warnings,
+        status,
+    }
+}
+
+fn validate_reference_content_inner(
+    workspace: &WorkspacePaths,
+    source_path: &Path,
+    content: &str,
+    options: &ReferenceValidationOptions,
+    references: &mut Vec<DiscoveredReference>,
+    errors: &mut Vec<ReferenceValidationIssue>,
+    warnings: &mut Vec<ReferenceValidationIssue>,
+    visited: &mut BTreeSet<PathBuf>,
+) {
+    let root = workspace.root();
+    let source_dir = source_path.parent().unwrap_or(root);
 
     for link in crate::markdown::parse_links(content) {
         let destination = link.destination.as_str();
@@ -181,7 +218,18 @@ pub fn validate_reference_content(
         });
 
         match validate_destination(destination, source_path, source_dir, root, options) {
-            Ok(()) => {}
+            Ok(()) => {
+                // When transitive validation is enabled, follow workspace Markdown links.
+                if options.transitive.enabled
+                    && destination_kind == ReferenceDestinationKind::WorkspaceFilesystem
+                {
+                    if let Some(target) = resolve_filesystem_link(destination, source_dir, root) {
+                        follow_transitive(
+                            workspace, &target, options, references, errors, warnings, visited,
+                        );
+                    }
+                }
+            }
             Err((issue_type, non_fatal)) => {
                 let issue = ReferenceValidationIssue {
                     source_artifact: source_path.to_string_lossy().to_string(),
@@ -198,19 +246,59 @@ pub fn validate_reference_content(
             }
         }
     }
+}
 
-    let status = if errors.is_empty() {
-        crate::validation::StatusResult::Pass
+/// Resolves a fragment-less workspace filesystem link to an absolute target path (if it exists
+/// inside the workspace and is a Markdown file).
+fn resolve_filesystem_link(destination: &str, source_dir: &Path, root: &Path) -> Option<PathBuf> {
+    // Strip any fragment component (`path.md#heading`).
+    let path_part = destination.split('#').next().unwrap_or(destination);
+    if path_part.is_empty() {
+        return None;
+    }
+    let candidate = source_dir.join(path_part);
+    if !candidate.starts_with(root) {
+        return None;
+    }
+    if candidate.extension().and_then(|e| e.to_str()) != Some("md") {
+        return None;
+    }
+    if candidate.is_file() {
+        Some(candidate)
     } else {
-        crate::validation::StatusResult::Fail
+        None
+    }
+}
+
+/// Recursively validates a linked Markdown document, bounded by `max_documents` and protected
+/// against cycles.
+#[allow(clippy::too_many_arguments)]
+fn follow_transitive(
+    workspace: &WorkspacePaths,
+    target: &Path,
+    options: &ReferenceValidationOptions,
+    references: &mut Vec<DiscoveredReference>,
+    errors: &mut Vec<ReferenceValidationIssue>,
+    warnings: &mut Vec<ReferenceValidationIssue>,
+    visited: &mut BTreeSet<PathBuf>,
+) {
+    // `max_documents == 0` is treated as "no limit" only when transitive is enabled with an
+    // explicit non-zero cap; otherwise stop once we've already visited the cap.
+    if options.transitive.max_documents > 0 && visited.len() >= options.transitive.max_documents {
+        return;
+    }
+    if !visited.insert(target.to_path_buf()) {
+        return;
+    }
+
+    let content = match std::fs::read_to_string(target) {
+        Ok(content) => content,
+        Err(_) => return,
     };
 
-    ReferenceValidationResult {
-        references,
-        errors,
-        warnings,
-        status,
-    }
+    validate_reference_content_inner(
+        workspace, target, &content, options, references, errors, warnings, visited,
+    );
 }
 
 fn classify_destination(destination: &str) -> ReferenceDestinationKind {
@@ -521,6 +609,53 @@ mod tests {
         )
         .unwrap();
 
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn transitive_validation_follows_linked_documents() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = workspace(&temp);
+        let root = workspace.root().to_path_buf();
+
+        write(&root.join("a.md"), "[b](b.md).\n");
+        write(&root.join("b.md"), "[missing](gone.md).\n");
+
+        let mut options = ReferenceValidationOptions::default();
+        options.transitive.enabled = true;
+        options.transitive.max_documents = 10;
+
+        let result = validate_references(&workspace, &root.join("a.md"), &options).unwrap();
+
+        // The broken link in the transitively reached `b.md` must be reported.
+        assert!(!result.is_valid());
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.issue_type == ReferenceIssueType::MissingFile
+                    && e.destination == "gone.md")
+        );
+    }
+
+    #[test]
+    fn transitive_validation_disabled_does_not_follow() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = workspace(&temp);
+        let root = workspace.root().to_path_buf();
+
+        write(&root.join("a.md"), "[b](b.md).\n");
+        write(&root.join("b.md"), "[missing](gone.md).\n");
+
+        // Default options have transitive disabled.
+        let result = validate_references(
+            &workspace,
+            &root.join("a.md"),
+            &ReferenceValidationOptions::default(),
+        )
+        .unwrap();
+
+        // `a.md`'s own link to `b.md` is valid, so the result passes; `b.md` is not traversed.
         assert!(result.is_valid());
     }
 }

@@ -1,13 +1,12 @@
 # SpecMan Runtime Library
 
-SpecMan is the runtime foundation for authoring and automating software specifications. It powers workspace discovery, dependency mapping, templating, and lifecycle workflows that keep specs consistent and reproducible.
+SpecMan is the runtime foundation for authoring and automating software specifications. It powers workspace discovery, dependency mapping, and lifecycle workflows that keep specs consistent and reproducible.
 
 ## What It Does
 
 - Discovers workspace roots and canonical directories.
 - Builds dependency graphs for specifications, implementations, and scratch pads.
-- Resolves templates from embedded defaults and workspace pointer files.
-- Renders Markdown templates deterministically.
+- Materializes git-referenced dependencies in-tree and records the resolved graph in `specman.lock`.
 - Provides lifecycle orchestration for planning, creating, and deleting artifacts.
 - Exposes structured lifecycle failures so callers can branch programmatically instead of matching on error strings.
 

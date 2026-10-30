@@ -9,9 +9,9 @@ This page documents behavior that is specific to the SpecMan Rust reference impl
 
 ## Workspace Rules
 
-- A workspace root is the nearest directory that contains both a `.specman` directory and a sibling `.git` directory. Discovery walks upward from the start path until it finds both.
+- A workspace root is the git repository toplevel: the nearest ancestor directory containing a `.git` directory, which must also contain a `specman.json` manifest. Discovery no longer uses the `.specman` folder as the boundary indicator.
 - Creating a workspace requires `git init` to have been run first; otherwise it errors.
-- Nested workspaces are rejected: you cannot create a workspace inside an ancestor that already has `.specman`.
+- Nested workspaces are rejected: you cannot create a workspace inside an ancestor that already has a `specman.json`, and monorepo layouts (multiple `specman.json` files under one `.git/`) are rejected.
 - Workspace resolution only accepts workspace-relative paths. Locator schemes such as `spec://`, `impl://`, `scratch://`, and `http(s)://` are rejected.
 
 ## Git Reference Resolution
@@ -21,21 +21,20 @@ This page documents behavior that is specific to the SpecMan Rust reference impl
 - The `url` field must begin with `https://` or `git@` (SSH). `http://` and other schemes are rejected.
 - Dependency resolution recurses with a maximum depth of 10; deeper graphs fail with a descriptive error.
 
-## On-Disk Cache and Symlinks
+## On-Disk Materialization
 
-- Referenced artifacts are cloned into a global cache rooted at `$HOME/.specman/ref/`.
-- Each cache entry is keyed by the host, the repository path (with any trailing `.git` removed), and the resolved commit hash. Because the hash is part of the key, the same commit is cloned once and reused; a tag that moves to a new commit produces a new clone.
-- Clones are reused whenever their directory already exists, and nothing is ever cleaned up automatically — the cache grows over time.
-- Inside a workspace, references appear as symlinks under `.specman/ref/{alias}` pointing into the cache. On non-Unix platforms, symlinking is not used; instead a copy of the referenced `specman.json` is placed at the alias path.
+- Referenced artifacts are materialized in-tree as full physical copies under `spec/{alias}/`; transitive dependencies nest as `spec/{alias}/spec/{sub-alias}/`. There is no global shared store and no symlinking: every reference is a standalone copy of its repository at the resolved commit (the nested `.git/` directory is removed after checkout).
+- `spec/`, `.specman/`, and `.specman/cache/` are machine-generated artifacts and must not be committed.
+- The resolved dependency graph is recorded in `specman.lock` at the repo root, written atomically and committed to version control.
 
 ## Validation Anchors
 
-- Validation anchors in source files use the syntax `[ENSURES: <identifier>:<type>]`, where `<identifier>` is the full dot-delimited constraint-group identifier.
-- The `<type>` is `CHECK` or `MANUAL` (uppercase). Any other value — including `TEST`, lowercase, or an empty/omitted type — is treated as a test anchor.
+- Validation anchors in source files use the syntax `[ENSURES: <identifier>:<type>]`, where `<identifier>` is the full dot-delimited constraint-group identifier. The `ENSURES` keyword is case-insensitive.
+- The `<type>` is `TEST` (the default when omitted), `CHECK`, or `MANUAL`. An unrecognized type also defaults to a test anchor.
 
 ## Compliance Scanning
 
-- Source scanning is recursive and skips the `.git`, `.specman`, and `target` directories, plus any file that looks binary (a NUL byte within the first 8000 bytes).
+- Source scanning is recursive and respects the repository's `.gitignore` rules. It additionally skips the `.git`, `.specman`, and `target` directories, plus any file that looks binary (a NUL byte within the first 8000 bytes).
 - Only constraint groups from the specifications listed in `impl.implements` are considered; transitive specification dependencies are excluded.
 - "Missing" means a governing constraint group has no matching anchor; "orphan" means an anchor references a group that is not governing. Orphans are reported but do **not** by themselves fail a workspace status check; missing anchors do.
 
@@ -46,7 +45,8 @@ This page documents behavior that is specific to the SpecMan Rust reference impl
 - Only `https://` destinations are treated as remote. `http://` and any other scheme are reported as unsupported.
 - Fragment (`#...`) references are validated only against Markdown targets (`.md` / `.markdown`, case-insensitive); fragments on other file types are ignored.
 - Image destinations are ignored, and reference-style links are resolved against their definitions before validation.
-- A transitive-validation option exists but is not implemented yet.
+- A transitive-validation option exists and, when enabled, follows workspace Markdown links
+  up to `max_documents` with cycle protection, validating each reached document's own references.
 
 ## Structure Indexing
 
@@ -54,17 +54,10 @@ This page documents behavior that is specific to the SpecMan Rust reference impl
 - Constraint-group declarations use the syntax `!<group>.<subgroup>:` at the start of a line; the identifier must contain at least one dot.
 - Rendering a heading recursively follows fragment-only inline links to other headings, with deduplication, cycle protection, and a maximum recursion depth of 50.
 
-## Templates
-
-- Scenario templates resolve in this order: a workspace override under `.specman/templates/`, then the embedded default (which is materialized into the workspace cache).
-- Remote (URL) templates are not supported yet.
-- Rendering uses Handlebars-style token substitution with HTML escaping disabled.
-- Specification templates require an `output_name` and a `title` token; implementation templates require only `output_name`.
-
 ## Create, Persist, and Delete
 
-- Creating an artifact writes `specman.json` and its Markdown body at the repository root. Specification bodies go to `spec.md`; implementation bodies go to `impl.md`.
-- Both create and delete support a dry-run flag: create returns the rendered template without writing, and delete returns a plan (with a `blocked` flag) without removing anything.
+- Creating an artifact writes `specman.json` and a minimal Markdown body at the repository root. Specification bodies go to `spec.md`; implementation bodies go to `impl.md`.
+- Both create and delete support a dry-run flag: create returns the generated body without writing, and delete returns a plan (with a `blocked` flag) without removing anything.
 - Deletion is blocked when any non-optional downstream dependent exists, unless `force` is set. Removal deletes `specman.json`, `spec.md`, and `impl.md`.
 
 ## Workspace Status

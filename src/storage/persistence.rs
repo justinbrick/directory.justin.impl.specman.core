@@ -46,27 +46,30 @@ impl<L: WorkspaceLocator> WorkspacePersistence<L> {
         let workspace = self.workspace()?;
         let root = workspace.root();
 
-        let manifest_json = serde_json::to_string_pretty(project)
-            .map_err(|err| SpecmanError::Serialization(err.to_string()))?;
-        fs::write(root.join("specman.json"), manifest_json).map_err(SpecmanError::Io)?;
-
-        let (kind, body_path) = if project.spec.is_some() {
-            let index = project
-                .spec
-                .as_ref()
-                .and_then(|spec| spec.index.as_deref())
-                .unwrap_or("spec.md");
+        let (kind, body_path) = if project.is_spec() {
+            let index = project.spec().and_then(|spec| spec.index.as_deref());
+            // The spec mandates tooling MUST NOT assume a default filename when `spec.index` is
+            // absent, so a specification without an index has no persisted body destination.
+            let Some(index) = index else {
+                return Err(SpecmanError::Serialization(
+                    "cannot persist a specification body: `spec.index` is absent and no default filename may be assumed".into(),
+                ));
+            };
             (ArtifactKind::Specification, root.join(index))
         } else {
             (ArtifactKind::Implementation, root.join("impl.md"))
         };
+
+        let manifest_json = serde_json::to_string_pretty(project)
+            .map_err(|err| SpecmanError::Serialization(err.to_string()))?;
+        fs::write(root.join("specman.json"), manifest_json).map_err(SpecmanError::Io)?;
 
         fs::write(&body_path, body).map_err(SpecmanError::Io)?;
 
         Ok(PersistedArtifact {
             artifact: ArtifactId {
                 kind,
-                name: project.name.clone(),
+                name: project.name().to_string(),
             },
             path: body_path,
             workspace,
@@ -77,17 +80,29 @@ impl<L: WorkspaceLocator> WorkspacePersistence<L> {
         let workspace = self.workspace()?;
         let root = workspace.root().to_path_buf();
 
-        let manifest = root.join("specman.json");
-        if manifest.exists() {
-            fs::remove_file(&manifest).map_err(SpecmanError::Io)?;
+        // Read the manifest first so we can remove the spec's canonical `index` body (if any),
+        // rather than assuming a hard-coded `spec.md`.
+        let manifest_path = root.join("specman.json");
+        let index = if manifest_path.is_file() {
+            crate::manifest::load_manifest(&manifest_path)
+                .ok()
+                .and_then(|project| project.spec().and_then(|spec| spec.index.clone()))
+        } else {
+            None
+        };
+
+        if manifest_path.exists() {
+            fs::remove_file(&manifest_path).map_err(SpecmanError::Io)?;
         }
-        let body = root.join("impl.md");
-        if body.exists() {
-            fs::remove_file(&body).map_err(SpecmanError::Io)?;
+        if let Some(index) = index {
+            let spec_body = root.join(index.as_str());
+            if spec_body.exists() {
+                fs::remove_file(&spec_body).map_err(SpecmanError::Io)?;
+            }
         }
-        let body = root.join("spec.md");
-        if body.exists() {
-            fs::remove_file(&body).map_err(SpecmanError::Io)?;
+        let impl_body = root.join("impl.md");
+        if impl_body.exists() {
+            fs::remove_file(&impl_body).map_err(SpecmanError::Io)?;
         }
 
         Ok(RemovedArtifact {

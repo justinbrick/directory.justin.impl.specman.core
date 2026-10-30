@@ -11,13 +11,13 @@ use crate::core::error::SpecmanError;
 #[derive(Debug, Error)]
 pub enum WorkspaceError {
     #[error(
-        "no .specman directory found from {searched_from} (hint: create .specman at the workspace root)"
+        "no git repository found from {searched_from} (hint: run `git init` at the project root first)"
     )]
     NotFound { searched_from: PathBuf },
     #[error(
-        "workspace root {workspace_root} is missing a .specman directory (hint: create {workspace_root}/.specman)"
+        "workspace root {workspace_root} is missing a specman.json manifest (hint: create {workspace_root}/specman.json)"
     )]
-    DotSpecmanMissing { workspace_root: PathBuf },
+    ManifestMissing { workspace_root: PathBuf },
     #[error(
         "workspace root {workspace_root} is missing a .git directory (hint: run `git init` in {workspace_root} first)"
     )]
@@ -27,7 +27,7 @@ pub enum WorkspaceError {
     #[error("invalid workspace locator {locator}: {message}")]
     InvalidHandle { locator: String, message: String },
     #[error(
-        "cannot create nested workspace at {requested}; ancestor workspace already has .specman at {existing}"
+        "cannot create nested workspace at {requested}; ancestor workspace already has specman.json at {existing}"
     )]
     NestedWorkspace {
         existing: PathBuf,
@@ -38,6 +38,15 @@ pub enum WorkspaceError {
         candidate: PathBuf,
         workspace_root: PathBuf,
     },
+    #[error(
+        "monorepo layouts are not supported: multiple specman.json files found under {workspace_root} (extra at {extra})"
+    )]
+    Monorepo {
+        workspace_root: PathBuf,
+        extra: PathBuf,
+    },
+    #[error("workspace root must be an absolute path, got {path:?}")]
+    RelativePath { path: PathBuf },
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -176,11 +185,16 @@ impl WorkspaceDiscovery {
         Ok(WorkspaceContext::new(paths))
     }
 
-    /// Validates an explicit workspace root, ensuring the `.specman` directory exists.
+    /// Validates an explicit workspace root: the directory must be a git toplevel
+    /// containing a `specman.json` manifest, and must be an absolute path.
     pub fn from_explicit(
         workspace_root: impl Into<PathBuf>,
     ) -> Result<WorkspaceContext, WorkspaceError> {
-        let root = absolutize(workspace_root.into())?;
+        let raw = workspace_root.into();
+        if !raw.is_absolute() {
+            return Err(WorkspaceError::RelativePath { path: raw });
+        }
+        let root = absolutize(raw)?;
         if !root.is_dir() {
             return Err(WorkspaceError::InvalidStart {
                 start: root,
@@ -188,17 +202,18 @@ impl WorkspaceDiscovery {
             });
         }
 
-        let dot_specman = root.join(".specman");
-        if !dot_specman.is_dir() {
-            return Err(WorkspaceError::DotSpecmanMissing {
+        ensure_git_repo(&root)?;
+
+        if !root.join("specman.json").is_file() {
+            return Err(WorkspaceError::ManifestMissing {
                 workspace_root: root,
             });
         }
 
-        ensure_git_repo(&root)?;
+        reject_monorepo(&root)?;
 
         let root_canonical = canonicalize_workspace_path(&root)?;
-        let dot_specman_canonical = canonicalize_workspace_path(&dot_specman)?;
+        let dot_specman_canonical = canonicalize_workspace_path(&root.join(".specman"))?;
 
         Ok(WorkspaceContext::new(WorkspacePaths::new(
             root_canonical,
@@ -206,14 +221,20 @@ impl WorkspaceDiscovery {
         )))
     }
 
-    /// Creates a new workspace at the provided root, provisioning `.specman` and required subdirectories.
+    /// Creates a new workspace at the provided root, provisioning `.specman` and the
+    /// required machine-generated subdirectories (`spec/` for dependencies and
+    /// `.specman/cache/`). The root must be an absolute path.
     pub fn create(workspace_root: impl Into<PathBuf>) -> Result<WorkspaceContext, WorkspaceError> {
-        let root = absolutize(workspace_root.into())?;
+        let raw = workspace_root.into();
+        if !raw.is_absolute() {
+            return Err(WorkspaceError::RelativePath { path: raw });
+        }
+        let root = absolutize(raw)?;
         let dot_specman = root.join(".specman");
 
         for ancestor in root.ancestors().skip(1) {
-            let existing = ancestor.join(".specman");
-            if existing.is_dir() {
+            let existing = ancestor.join("specman.json");
+            if existing.is_file() {
                 return Err(WorkspaceError::NestedWorkspace {
                     existing,
                     requested: root,
@@ -233,8 +254,8 @@ impl WorkspaceDiscovery {
         }
 
         fs::create_dir_all(&dot_specman)?;
-        fs::create_dir_all(dot_specman.join("ref"))?;
         fs::create_dir_all(dot_specman.join("cache"))?;
+        fs::create_dir_all(root.join("spec"))?;
 
         let root_canonical = canonicalize_workspace_path(&root)?;
         let dot_specman_canonical = canonicalize_workspace_path(&dot_specman)?;
@@ -248,9 +269,16 @@ impl WorkspaceDiscovery {
     fn locate_from(start_dir: PathBuf) -> Result<WorkspacePaths, WorkspaceError> {
         let search_origin = start_dir.clone();
         for ancestor in start_dir.ancestors() {
-            let candidate = ancestor.join(".specman");
-            if candidate.is_dir() {
-                ensure_git_repo(ancestor)?;
+            // The workspace root is the git toplevel: the nearest ancestor that directly
+            // contains a `.git/` directory. The `.specman` folder is NOT a boundary marker.
+            if ancestor.join(".git").is_dir() {
+                if !ancestor.join("specman.json").is_file() {
+                    return Err(WorkspaceError::ManifestMissing {
+                        workspace_root: ancestor.to_path_buf(),
+                    });
+                }
+
+                reject_monorepo(ancestor)?;
 
                 let normalized_root = lexical_normalize(ancestor);
                 let normalized_dot = normalized_root.join(".specman");
@@ -301,7 +329,10 @@ impl FilesystemWorkspaceLocator {
 impl WorkspaceLocator for FilesystemWorkspaceLocator {
     fn workspace(&self) -> Result<WorkspacePaths, SpecmanError> {
         if let Some(paths) = self.cache.lock().unwrap().clone() {
-            if paths.root().is_dir() && paths.dot_specman().is_dir() {
+            if paths.root().is_dir()
+                && paths.root().join(".git").is_dir()
+                && paths.root().join("specman.json").is_file()
+            {
                 return Ok(paths);
             }
         }
@@ -474,6 +505,45 @@ fn ensure_git_repo(root: &Path) -> Result<(), WorkspaceError> {
     }
 }
 
+/// Rejects monorepo layouts: a workspace root must contain at most one project `specman.json`.
+///
+/// Machine-generated subtrees (`.git/`, `.specman/`, and `spec/` — the latter hosts materialized
+/// dependency copies which legitimately contain their own `specman.json`) are skipped during the
+/// scan so they do not count as monorepo violations.
+fn reject_monorepo(root: &Path) -> Result<(), WorkspaceError> {
+    let mut stack = match fs::read_dir(root) {
+        Ok(entries) => entries.flatten().map(|e| e.path()).collect::<Vec<_>>(),
+        Err(_) => return Ok(()),
+    };
+    let mut found: Option<PathBuf> = None;
+
+    while let Some(path) = stack.pop() {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if matches!(name, ".git" | ".specman" | "spec") {
+            continue;
+        }
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.is_dir() {
+            if let Ok(entries) = fs::read_dir(&path) {
+                stack.extend(entries.flatten().map(|e| e.path()));
+            }
+        } else if name == "specman.json" {
+            if found.is_some() {
+                return Err(WorkspaceError::Monorepo {
+                    workspace_root: root.to_path_buf(),
+                    extra: path,
+                });
+            }
+            found = Some(path);
+        }
+    }
+
+    Ok(())
+}
+
 impl From<WorkspaceError> for SpecmanError {
     fn from(err: WorkspaceError) -> Self {
         SpecmanError::Workspace(err.to_string())
@@ -488,14 +558,19 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::tempdir;
 
+    /// Creates the minimal workspace markers: a `.git/` toplevel and a `specman.json`.
+    fn mkdir_workspace(root: &std::path::Path) {
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join("specman.json"), r#"{ "name": "ws" }"#).unwrap();
+    }
+
     #[test]
-    fn discovery_prefers_nearest_dot_specman() {
+    fn discovery_prefers_nearest_git_toplevel() {
         let temp = tempdir().unwrap();
         let top = temp.path().join("repo");
         let nested = top.join("nested");
-        fs::create_dir_all(top.join(".specman")).unwrap();
-        fs::create_dir_all(nested.join(".specman")).unwrap();
-        fs::create_dir_all(nested.join(".git")).unwrap();
+        mkdir_workspace(&top);
+        mkdir_workspace(&nested);
         fs::create_dir_all(nested.join("deep")).unwrap();
 
         // [ENSURES: concept-workspace-discovery.requirements]
@@ -511,34 +586,48 @@ mod tests {
     }
 
     #[test]
-    fn discovery_errors_when_dot_specman_missing() {
+    fn discovery_errors_when_no_git_repository() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("orphaned");
         fs::create_dir_all(root.join("child")).unwrap();
 
-        // [ENSURES: concept-specman-workspace.dot-folder]
+        // [ENSURES: concept-specman-workspace.git-co-location]
         let err = WorkspaceDiscovery::initialize(root.join("child"))
             .expect_err("expected workspace error");
         assert!(matches!(err, WorkspaceError::NotFound { .. }));
     }
 
     #[test]
-    fn explicit_path_requires_dot_specman() {
+    fn discovery_errors_when_manifest_missing() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("repo-no-manifest");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(root.join("child")).unwrap();
+
+        let err = WorkspaceDiscovery::initialize(root.join("child"))
+            .expect_err("expected manifest error");
+        assert!(matches!(err, WorkspaceError::ManifestMissing { .. }));
+    }
+
+    #[test]
+    fn explicit_path_requires_manifest() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("explicit");
         fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(root.join(".git")).unwrap();
 
         // [ENSURES: concept-workspace-discovery.initialization]
-        let err = WorkspaceDiscovery::from_explicit(&root).expect_err("missing .specman");
-        assert!(matches!(err, WorkspaceError::DotSpecmanMissing { .. }));
+        let err = WorkspaceDiscovery::from_explicit(&root).expect_err("missing specman.json");
+        assert!(matches!(err, WorkspaceError::ManifestMissing { .. }));
     }
 
     #[test]
     fn context_resolves_paths_and_rejects_schemes() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("workspace");
-        fs::create_dir_all(root.join(".specman")).unwrap();
+        fs::create_dir_all(&root).unwrap();
         fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join("specman.json"), r#"{ "name": "ws" }"#).unwrap();
         let ctx = WorkspaceDiscovery::from_explicit(&root).unwrap();
 
         let preserved_root = normalize_workspace_path(&root);
@@ -561,8 +650,9 @@ mod tests {
     fn context_rejects_workspace_escape() {
         let temp = tempdir().unwrap();
         let root = temp.path().join("workspace");
-        fs::create_dir_all(root.join(".specman")).unwrap();
+        fs::create_dir_all(&root).unwrap();
         fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(root.join("specman.json"), r#"{ "name": "ws" }"#).unwrap();
         let ctx = WorkspaceDiscovery::from_explicit(&root).unwrap();
 
         let err = ctx
@@ -578,8 +668,9 @@ mod tests {
 
         let temp = tempdir().unwrap();
         let real_root = temp.path().join("real");
-        fs::create_dir_all(real_root.join(".specman")).unwrap();
+        fs::create_dir_all(&real_root).unwrap();
         fs::create_dir_all(real_root.join(".git")).unwrap();
+        fs::write(real_root.join("specman.json"), r#"{ "name": "ws" }"#).unwrap();
         let link_root = temp.path().join("link");
         unix_fs::symlink(&real_root, &link_root).unwrap();
 
@@ -598,15 +689,16 @@ mod tests {
     fn filesystem_locator_revalidates_cache() {
         let temp = tempdir().unwrap();
         let workspace_root = temp.path().join("workspace");
-        fs::create_dir_all(workspace_root.join(".specman")).unwrap();
+        fs::create_dir_all(&workspace_root).unwrap();
         fs::create_dir_all(workspace_root.join(".git")).unwrap();
+        fs::write(workspace_root.join("specman.json"), r#"{ "name": "ws" }"#).unwrap();
         let locator = FilesystemWorkspaceLocator::new(workspace_root.join("sub"));
 
         let first = locator.workspace().expect("initial lookup succeeds");
         let workspace_root_normalized = normalize_workspace_path(&workspace_root);
         assert_eq!(first.root(), workspace_root_normalized.as_path());
 
-        fs::remove_dir_all(first.dot_specman()).unwrap();
+        fs::remove_file(workspace_root.join("specman.json")).unwrap();
 
         let err = locator.workspace().expect_err("should error after removal");
         assert!(matches!(err, SpecmanError::Workspace(_)));
@@ -620,10 +712,9 @@ mod tests {
 
         // [ENSURES: concept-workspace-discovery.initialization]
         let first = WorkspaceDiscovery::create(&root).expect("create succeeds");
-        // [ENSURES: concept-specman-workspace.dot-folder]
         assert!(first.paths().dot_specman().is_dir());
-        assert!(first.paths().ref_dir().is_dir());
         assert!(first.paths().cache_dir().is_dir());
+        assert!(root.join("spec").is_dir());
 
         let second = WorkspaceDiscovery::create(&root).expect("idempotent");
         assert_eq!(second.paths().root(), first.paths().root());
@@ -633,7 +724,9 @@ mod tests {
     fn create_rejects_nested_workspace() {
         let temp = tempdir().unwrap();
         let outer = temp.path().join("outer");
-        fs::create_dir_all(outer.join(".specman")).unwrap();
+        fs::create_dir_all(&outer).unwrap();
+        fs::create_dir_all(outer.join(".git")).unwrap();
+        fs::write(outer.join("specman.json"), r#"{ "name": "outer" }"#).unwrap();
 
         let inner = outer.join("inner");
         let err = WorkspaceDiscovery::create(&inner).expect_err("nested should fail");
