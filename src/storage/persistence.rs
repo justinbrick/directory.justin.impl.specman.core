@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::core::error::SpecmanError;
 use crate::graph::tree::{ArtifactId, ArtifactKind};
-use crate::manifest::SpecManProject;
+use crate::manifest::SpecManProjectManifest;
 use crate::workspace::{WorkspaceLocator, WorkspacePaths};
 
 /// An artifact that was persisted to disk.
@@ -40,7 +40,7 @@ impl<L: WorkspaceLocator> WorkspacePersistence<L> {
     /// Writes a `specman.json` manifest plus the project's Markdown body to the repository root.
     pub fn persist_project(
         &self,
-        project: &SpecManProject,
+        project: &SpecManProjectManifest,
         body: &str,
     ) -> Result<PersistedArtifact, SpecmanError> {
         let workspace = self.workspace()?;
@@ -84,7 +84,7 @@ impl<L: WorkspaceLocator> WorkspacePersistence<L> {
         // rather than assuming a hard-coded `spec.md`.
         let manifest_path = root.join("specman.json");
         let index = if manifest_path.is_file() {
-            crate::manifest::load_manifest(&manifest_path)
+            crate::manifest_ops::load_manifest(&manifest_path)
                 .ok()
                 .and_then(|project| project.spec().and_then(|spec| spec.index.clone()))
         } else {

@@ -1,6 +1,6 @@
 [package]
 name = "specman"
-version = "5.0.0"
+version = "6.0.1"
 edition = "2024"
 description = "SpecMan runtime library for dependency mapping and lifecycle automation."
 license = "MIT"

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::SpecmanError;
 use crate::core::shared::EntityKind;
-use crate::manifest::load_manifest;
+use crate::manifest_ops::load_manifest;
 use crate::workspace::{WorkspaceLocator, WorkspacePaths};
 
 /// Key identifying a workspace artifact in the structure index.

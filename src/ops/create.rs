@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::env::SpecmanEnv;
 use crate::core::error::SpecmanError;
-use crate::manifest::{GitReference, ImplProject, ImplementsEntry, SpecManProject, SpecProject};
+use crate::manifest::{
+    GitReference, ImplProject, ImplementationManifest, ImplementsEntry, SpecManProjectManifest,
+    SpecProject, SpecificationManifest,
+};
 use crate::storage::persistence::PersistedArtifact;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -57,7 +60,7 @@ pub fn create_specification(
         return Ok(CreateResult::DryRun(CreatedBody { body }));
     }
 
-    let project = SpecManProject::Variant0 {
+    let project = SpecManProjectManifest::SpecificationManifest(SpecificationManifest {
         name: opts.name,
         description: None,
         overrides: Vec::new(),
@@ -67,7 +70,7 @@ pub fn create_specification(
             references: Vec::new(),
         },
         tags: Vec::new(),
-    };
+    });
 
     let persisted = env.persistence.persist_project(&project, &body)?;
     Ok(CreateResult::Persisted(persisted))
@@ -83,7 +86,7 @@ pub fn create_implementation(
         return Ok(CreateResult::DryRun(CreatedBody { body }));
     }
 
-    let project = SpecManProject::Variant1 {
+    let project = SpecManProjectManifest::ImplementationManifest(ImplementationManifest {
         name: opts.name,
         description: None,
         overrides: Vec::new(),
@@ -96,7 +99,7 @@ pub fn create_implementation(
             utilizes: Vec::new(),
         },
         tags: Vec::new(),
-    };
+    });
 
     let persisted = env.persistence.persist_project(&project, &body)?;
     Ok(CreateResult::Persisted(persisted))

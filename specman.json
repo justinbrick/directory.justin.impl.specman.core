@@ -6,7 +6,7 @@
     "implements": [
       {
         "ref": {
-          "ref": "82f76729278982b60b31a0493736c2e669f3740a",
+          "ref": "v6.0.1",
           "url": "https://github.com/justinbrick/directory.justin.spec.specman.git",
           "alias": "specman"
         }

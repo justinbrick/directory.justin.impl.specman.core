@@ -19,7 +19,7 @@ use std::process::Command;
 
 use crate::core::error::SpecmanError;
 use crate::manifest::{
-    GitReference, ImplProject, LockedEntry, Lockfile, SpecManProject, SpecProject,
+    GitReference, ImplProject, LockedEntry, Lockfile, SpecManProjectManifest, SpecProject,
 };
 use crate::workspace::WorkspacePaths;
 
@@ -232,7 +232,7 @@ impl ResolutionContext {
 ///
 /// For implementations, `implements` entries refer to specifications and `utilizes` entries to
 /// implementations; for specifications, `references` entries refer to other specifications.
-pub fn references_of(project: &SpecManProject) -> Vec<(&GitReference, ReferenceKind)> {
+pub fn references_of(project: &SpecManProjectManifest) -> Vec<(&GitReference, ReferenceKind)> {
     match (project.spec(), project.impl_()) {
         (Some(SpecProject { references, .. }), None) => references
             .iter()
@@ -291,7 +291,7 @@ pub fn load_lockfile(workspace: &WorkspacePaths) -> Result<Option<Lockfile>, Spe
 /// the lockfile and `specman.json`.
 fn locked_hashes(
     workspace: &WorkspacePaths,
-    project: &SpecManProject,
+    project: &SpecManProjectManifest,
 ) -> Result<Option<HashMap<String, (String, String)>>, SpecmanError> {
     let Some(lock) = load_lockfile(workspace)? else {
         return Ok(None);
@@ -432,7 +432,7 @@ pub struct InstallResult {
 /// When a `specman.lock` is present, the locked hashes take precedence over tag re-resolution and
 /// any divergence from `specman.json` causes this function to fail rather than silently overwrite.
 pub fn install(
-    project: &SpecManProject,
+    project: &SpecManProjectManifest,
     workspace: &WorkspacePaths,
 ) -> Result<InstallResult, SpecmanError> {
     let locked = locked_hashes(workspace, project)?;
@@ -464,7 +464,7 @@ pub fn install(
 
 #[allow(clippy::too_many_arguments)]
 fn install_recursive(
-    project: &SpecManProject,
+    project: &SpecManProjectManifest,
     workspace: &WorkspacePaths,
     base_dir: PathBuf,
     declaring_alias: &str,
@@ -512,7 +512,7 @@ fn install_recursive(
                 "materialized artifact `{alias}` has no {MANIFEST_FILENAME}"
             )));
         }
-        let nested = crate::manifest::load_manifest(&nested_manifest).map_err(|err| {
+        let nested = crate::manifest_ops::load_manifest(&nested_manifest).map_err(|err| {
             SpecmanError::Dependency(format!(
                 "failed to load {}: {err}",
                 nested_manifest.display()

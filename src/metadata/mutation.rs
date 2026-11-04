@@ -3,7 +3,8 @@ use std::path::Path;
 
 use crate::core::error::SpecmanError;
 use crate::install::resolve_commit;
-use crate::manifest::{GitReference, OverrideEntry, SpecManProject, load_manifest};
+use crate::manifest::{GitReference, OverrideEntry, SpecManProjectManifest};
+use crate::manifest_ops::load_manifest;
 use crate::metadata::update_model::ManifestUpdate;
 
 /// Applies a `ManifestUpdate` to a `specman.json` file in place and returns the full updated
@@ -15,25 +16,25 @@ use crate::metadata::update_model::ManifestUpdate;
 pub fn apply_manifest_update(
     path: &Path,
     update: &ManifestUpdate,
-) -> Result<SpecManProject, SpecmanError> {
+) -> Result<SpecManProjectManifest, SpecmanError> {
     let mut project = load_manifest(path)?;
 
     match update {
         ManifestUpdate::Specification(up) => {
             apply_identity(&mut project, &up.identity);
             apply_overrides(&mut project, &up.overrides)?;
-            let SpecManProject::Variant0 { spec, .. } = &mut project else {
+            let SpecManProjectManifest::SpecificationManifest(m) = &mut project else {
                 return Err(SpecmanError::Serialization(
                     "cannot apply specification update to a non-spec project".into(),
                 ));
             };
             for reference in &up.add_references {
                 validate_reference(reference)?;
-                if !spec.references.iter().any(|r| r.alias == reference.alias) {
-                    spec.references.push(reference.clone());
+                if !m.spec.references.iter().any(|r| r.alias == reference.alias) {
+                    m.spec.references.push(reference.clone());
                 }
             }
-            spec.references.retain(|r| {
+            m.spec.references.retain(|r| {
                 !up.remove_references
                     .iter()
                     .any(|alias| alias == r.alias.as_str())
@@ -42,37 +43,39 @@ pub fn apply_manifest_update(
         ManifestUpdate::Implementation(up) => {
             apply_identity(&mut project, &up.identity);
             apply_overrides(&mut project, &up.overrides)?;
-            let SpecManProject::Variant1 { impl_, .. } = &mut project else {
+            let SpecManProjectManifest::ImplementationManifest(m) = &mut project else {
                 return Err(SpecmanError::Serialization(
                     "cannot apply implementation update to a non-impl project".into(),
                 ));
             };
             for entry in &up.add_implements {
                 validate_reference(&entry.ref_)?;
-                if !impl_
+                if !m
+                    .impl_
                     .implements
                     .iter()
                     .any(|e| e.ref_.alias == entry.ref_.alias)
                 {
-                    impl_.implements.push(entry.clone());
+                    m.impl_.implements.push(entry.clone());
                 }
             }
-            impl_.implements.retain(|e| {
+            m.impl_.implements.retain(|e| {
                 !up.remove_implements
                     .iter()
                     .any(|alias| alias == e.ref_.alias.as_str())
             });
             for entry in &up.add_utilizes {
                 validate_reference(&entry.ref_)?;
-                if !impl_
+                if !m
+                    .impl_
                     .utilizes
                     .iter()
                     .any(|e| e.ref_.alias == entry.ref_.alias)
                 {
-                    impl_.utilizes.push(entry.clone());
+                    m.impl_.utilizes.push(entry.clone());
                 }
             }
-            impl_.utilizes.retain(|e| {
+            m.impl_.utilizes.retain(|e| {
                 !up.remove_utilizes
                     .iter()
                     .any(|alias| alias == e.ref_.alias.as_str())
@@ -89,13 +92,12 @@ pub fn apply_manifest_update(
 
 /// Adds and removes `overrides` entries on the top-level `overrides` list, keyed by `site`.
 fn apply_overrides(
-    project: &mut SpecManProject,
+    project: &mut SpecManProjectManifest,
     update: &crate::metadata::update_model::OverridesUpdate,
 ) -> Result<(), SpecmanError> {
     let overrides = match project {
-        SpecManProject::Variant0 { overrides, .. } | SpecManProject::Variant1 { overrides, .. } => {
-            overrides
-        }
+        SpecManProjectManifest::SpecificationManifest(m) => &mut m.overrides,
+        SpecManProjectManifest::ImplementationManifest(m) => &mut m.overrides,
     };
 
     for entry in &update.add_overrides {
@@ -137,22 +139,16 @@ fn validate_override(entry: &OverrideEntry) -> Result<(), SpecmanError> {
 }
 
 fn apply_identity(
-    project: &mut SpecManProject,
+    project: &mut SpecManProjectManifest,
     update: &crate::metadata::update_model::IdentityUpdate,
 ) {
     let (name, description, tags) = match project {
-        SpecManProject::Variant0 {
-            name,
-            description,
-            tags,
-            ..
+        SpecManProjectManifest::SpecificationManifest(m) => {
+            (&mut m.name, &mut m.description, &mut m.tags)
         }
-        | SpecManProject::Variant1 {
-            name,
-            description,
-            tags,
-            ..
-        } => (name, description, tags),
+        SpecManProjectManifest::ImplementationManifest(m) => {
+            (&mut m.name, &mut m.description, &mut m.tags)
+        }
     };
 
     if let Some(new_name) = &update.name {

@@ -3,6 +3,7 @@ pub(crate) mod graph;
 pub(crate) mod index;
 pub(crate) mod install;
 pub(crate) mod manifest;
+pub(crate) mod manifest_ops;
 pub(crate) mod markdown;
 pub(crate) mod metadata;
 pub(crate) mod ops;
@@ -29,9 +30,9 @@ pub use install::{
 pub use manifest::{
     GitReference, GitReferenceAlias, GitReferenceUrl, ImplProject, ImplementsEntry, LockedEntry,
     LockedEntryResolved, Lockfile, OverrideEntry, OverrideEntryRef, OverrideEntrySite,
-    SpecManProject, SpecManProjectManifest, SpecProject, UtilizesEntry, load_manifest,
-    parse_manifest, validate_manifest_value,
+    SpecManProjectManifest, SpecProject, UtilizesEntry,
 };
+pub use manifest_ops::{load_manifest, parse_manifest, validate_manifest_value};
 pub use metadata::{
     IdentityUpdate, ImplementationUpdate, ManifestUpdate, OverridesUpdate, SpecificationUpdate,
     apply_manifest_update,

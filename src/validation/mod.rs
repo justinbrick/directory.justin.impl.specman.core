@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::SpecmanError;
 use crate::graph::tree::{ArtifactId, ArtifactKind, FilesystemDependencyMapper};
-use crate::manifest::{SpecManProject, load_manifest};
+use crate::manifest::SpecManProjectManifest;
+use crate::manifest_ops::load_manifest;
 use crate::workspace::{WorkspaceLocator, WorkspacePaths};
 
 mod references;
@@ -354,7 +355,7 @@ pub fn validate_workspace_status(
     })
 }
 
-fn project_body(workspace: &WorkspacePaths, manifest: &SpecManProject) -> Option<PathBuf> {
+fn project_body(workspace: &WorkspacePaths, manifest: &SpecManProjectManifest) -> Option<PathBuf> {
     match manifest.spec() {
         Some(spec) => spec
             .index
@@ -403,7 +404,7 @@ impl WorkspaceLocator for FixedWorkspaceLocator {
 /// transitive specification dependencies are intentionally excluded.
 fn governing_constraints(
     workspace: &WorkspacePaths,
-    manifest: &SpecManProject,
+    manifest: &SpecManProjectManifest,
 ) -> Result<Vec<String>, SpecmanError> {
     let Some(impl_) = manifest.impl_() else {
         return Ok(Vec::new());
@@ -430,7 +431,7 @@ fn governing_constraints(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::parse_manifest;
+    use crate::manifest_ops::parse_manifest;
 
     fn workspace(root: &Path) -> WorkspacePaths {
         WorkspacePaths::new(root.to_path_buf(), root.join(".specman"))

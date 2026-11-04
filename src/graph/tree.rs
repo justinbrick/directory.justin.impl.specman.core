@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::SpecmanError;
 use crate::install;
-use crate::manifest::{ImplProject, SpecManProject, SpecProject, load_manifest};
+use crate::manifest::{ImplProject, SpecManProjectManifest, SpecProject};
+use crate::manifest_ops::load_manifest;
 use crate::workspace::{WorkspaceLocator, WorkspacePaths};
 
 /// Identity for any SpecMan artifact (specification or implementation).
@@ -202,7 +203,7 @@ impl<L: WorkspaceLocator> FilesystemDependencyMapper<L> {
 
     fn build_tree(
         &self,
-        project: SpecManProject,
+        project: SpecManProjectManifest,
         workspace: WorkspacePaths,
     ) -> Result<DependencyTree, SpecmanError> {
         let root = summarize_project(&project, Some(workspace.root().to_path_buf()));
@@ -249,7 +250,7 @@ impl<L: WorkspaceLocator> FilesystemDependencyMapper<L> {
 
     fn visit(
         &self,
-        project: &SpecManProject,
+        project: &SpecManProjectManifest,
         summary: &ArtifactSummary,
         root: &ArtifactSummary,
         workspace: WorkspacePaths,
@@ -324,7 +325,10 @@ where
     }
 }
 
-fn summarize_project(project: &SpecManProject, resolved_path: Option<PathBuf>) -> ArtifactSummary {
+fn summarize_project(
+    project: &SpecManProjectManifest,
+    resolved_path: Option<PathBuf>,
+) -> ArtifactSummary {
     let kind = if project.is_spec() {
         ArtifactKind::Specification
     } else {
@@ -345,7 +349,9 @@ fn summarize_project(project: &SpecManProject, resolved_path: Option<PathBuf>) -
     }
 }
 
-fn references_of(project: &SpecManProject) -> Vec<(crate::manifest::GitReference, ArtifactKind)> {
+fn references_of(
+    project: &SpecManProjectManifest,
+) -> Vec<(crate::manifest::GitReference, ArtifactKind)> {
     match (project.spec(), project.impl_()) {
         (Some(SpecProject { references, .. }), None) => references
             .iter()
