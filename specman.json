@@ -1,12 +1,12 @@
 {
-  "$schema": "https://raw.githubusercontent.com/justinbrick/directory.justin.spec.specman/82f76729278982b60b31a0493736c2e669f3740a/models/specman.schema.json",
+  "$schema": "https://raw.githubusercontent.com/justinbrick/directory.justin.spec.specman/3d2b0a7b4871222d838966a790d30465421bfb21/models/specman.schema.json",
   "name": "Specification Manager Core",
   "description": "The core implementation for the Specification Manager core specification.",
   "impl": {
     "implements": [
       {
         "ref": {
-          "ref": "v6.0.1",
+          "ref": "v6.0.2",
           "url": "https://github.com/justinbrick/directory.justin.spec.specman.git",
           "alias": "specman"
         }

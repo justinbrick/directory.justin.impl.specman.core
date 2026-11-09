@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::manifest::{GitReference, ImplementsEntry, OverrideEntry, UtilizesEntry};
+use crate::manifest::{GitReference, ImplementsEntry, OverrideEntry};
 
 /// Shared identity and override fields for updates.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
@@ -47,10 +47,6 @@ pub struct ImplementationUpdate {
     pub add_implements: Vec<ImplementsEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remove_implements: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub add_utilizes: Vec<UtilizesEntry>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub remove_utilizes: Vec<String>,
 }
 
 /// Discriminated enum for type-safe `specman.json` updates.

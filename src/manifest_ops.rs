@@ -205,26 +205,6 @@ fn validate_impl_project(impl_: &serde_json::Map<String, Value>) -> Result<(), S
         }
     }
 
-    if let Some(utilizes) = impl_.get("utilizes") {
-        match utilizes {
-            Value::Array(items) => {
-                for (idx, item) in items.iter().enumerate() {
-                    validate_ref_entry(item, &format!("impl.utilizes[{idx}]"))?;
-                }
-            }
-            Value::Null => {
-                return Err(SpecmanError::Serialization(
-                    "specman.json `impl.utilizes` must not be null".into(),
-                ));
-            }
-            _ => {
-                return Err(SpecmanError::Serialization(
-                    "specman.json `impl.utilizes` must be an array".into(),
-                ));
-            }
-        }
-    }
-
     Ok(())
 }
 

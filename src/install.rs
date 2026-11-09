@@ -228,43 +228,16 @@ impl ResolutionContext {
     }
 }
 
-/// Returns the direct references of a project as `(reference, expected_kind)` pairs.
-///
-/// For implementations, `implements` entries refer to specifications and `utilizes` entries to
-/// implementations; for specifications, `references` entries refer to other specifications.
-pub fn references_of(project: &SpecManProjectManifest) -> Vec<(&GitReference, ReferenceKind)> {
+/// Returns the direct references of a project. For implementations these are the
+/// `implements` entries; for specifications they are the `references` entries. Every
+/// reference points to a specification, since implementations no longer depend on other
+/// implementations.
+pub fn references_of(project: &SpecManProjectManifest) -> Vec<&GitReference> {
     match (project.spec(), project.impl_()) {
-        (Some(SpecProject { references, .. }), None) => references
-            .iter()
-            .map(|r| (r, ReferenceKind::Specification))
-            .collect(),
-        (
-            None,
-            Some(ImplProject {
-                implements,
-                utilizes,
-            }),
-        ) => {
-            let mut out: Vec<(&GitReference, ReferenceKind)> = implements
-                .iter()
-                .map(|e| (&e.ref_, ReferenceKind::Specification))
-                .collect();
-            out.extend(
-                utilizes
-                    .iter()
-                    .map(|u| (&u.ref_, ReferenceKind::Implementation)),
-            );
-            out
-        }
+        (Some(SpecProject { references, .. }), None) => references.iter().collect(),
+        (None, Some(ImplProject { implements })) => implements.iter().map(|e| &e.ref_).collect(),
         _ => Vec::new(),
     }
-}
-
-/// The artifact kind a reference is expected to resolve to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReferenceKind {
-    Specification,
-    Implementation,
 }
 
 /// Loads and validates `specman.lock` at the workspace root, if it exists.
@@ -309,7 +282,7 @@ fn locked_hashes(
 
     // Detect divergence: every direct reference in `specman.json` must have a matching lock entry
     // with the same URL. A missing entry or changed URL/alias means the lockfile is stale.
-    for (reference, _kind) in references_of(project) {
+    for reference in references_of(project) {
         match map.get(reference.alias.as_str()) {
             None => {
                 return Err(SpecmanError::Dependency(format!(
@@ -331,7 +304,7 @@ fn locked_hashes(
     // Reject lock entries that don't correspond to any direct reference (alias/url mismatch).
     for entry in &lock.references {
         if !entry.transitive {
-            let matches = references_of(project).iter().any(|(r, _)| {
+            let matches = references_of(project).iter().any(|r| {
                 r.alias.as_str() == entry.alias.as_str() && r.url.as_str() == entry.url.as_str()
             });
             if !matches {
@@ -483,7 +456,7 @@ fn install_recursive(
         )));
     }
 
-    for (reference, _kind) in references_of(project) {
+    for reference in references_of(project) {
         let site = reference.site();
         let natural = resolve_commit(
             reference.url.as_str(),

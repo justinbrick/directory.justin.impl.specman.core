@@ -24,13 +24,12 @@ pub use index::{
     RelationshipKind, StructureIndexing, StructureQuery, WorkspaceIndex, build_workspace_index,
 };
 pub use install::{
-    InstallResult, ReferenceKind, ensure_reference, install, load_lockfile, parse_git_url,
-    resolve_commit,
+    InstallResult, ensure_reference, install, load_lockfile, parse_git_url, resolve_commit,
 };
 pub use manifest::{
     GitReference, GitReferenceAlias, GitReferenceUrl, ImplProject, ImplementsEntry, LockedEntry,
     LockedEntryResolved, Lockfile, OverrideEntry, OverrideEntryRef, OverrideEntrySite,
-    SpecManProjectManifest, SpecProject, UtilizesEntry,
+    SpecManProjectManifest, SpecProject,
 };
 pub use manifest_ops::{load_manifest, parse_manifest, validate_manifest_value};
 pub use metadata::{

@@ -151,9 +151,6 @@ impl<'de> ::serde::Deserialize<'de> for GitReferenceUrl {
 pub struct ImplProject {
     #[doc = "The specifications this implementation targets. Must contain at least one entry."]
     pub implements: ::std::vec::Vec<ImplementsEntry>,
-    #[doc = "Other implementations this implementation depends on. May be absent or an empty array, but must not be null."]
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-    pub utilizes: ::std::vec::Vec<UtilizesEntry>,
 }
 #[doc = "An implementation project manifest."]
 #[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, schemars :: JsonSchema)]
@@ -460,17 +457,6 @@ pub struct SpecificationManifest {
     #[doc = "Tags for categorization. Must not be null."]
     #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
     pub tags: ::std::vec::Vec<::std::string::String>,
-}
-#[doc = "`UtilizesEntry`"]
-#[derive(:: serde :: Deserialize, :: serde :: Serialize, Clone, Debug, schemars :: JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UtilizesEntry {
-    #[doc = "A list of regex patterns. Constraint groups from the utilized implementation that match any of these patterns are filtered out and ignored during compliance evaluation. May be absent or an empty array, but must not be null."]
-    #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
-    pub ignore_constraints: ::std::vec::Vec<::std::string::String>,
-    #[doc = "The implementation being utilized. The referenced artifact must be an implementation."]
-    #[serde(rename = "ref")]
-    pub ref_: GitReference,
 }
 #[doc = " Error types."]
 pub mod error {

@@ -96,7 +96,6 @@ pub fn create_implementation(
                 ref_: opts.target,
                 constraints: Vec::new(),
             }],
-            utilizes: Vec::new(),
         },
         tags: Vec::new(),
     });

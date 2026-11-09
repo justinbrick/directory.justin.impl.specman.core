@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::error::SpecmanError;
 use crate::install;
-use crate::manifest::{ImplProject, SpecManProjectManifest, SpecProject};
+use crate::manifest::SpecManProjectManifest;
 use crate::manifest_ops::load_manifest;
 use crate::workspace::{WorkspaceLocator, WorkspacePaths};
 
@@ -211,8 +211,8 @@ impl<L: WorkspaceLocator> FilesystemDependencyMapper<L> {
         let mut visited: BTreeSet<String> = BTreeSet::new();
         visited.insert(root.id.to_string());
 
-        for (reference, _kind) in references_of(&project) {
-            let mut cache_dir = install::ensure_reference(&reference, &workspace)?;
+        for reference in install::references_of(&project) {
+            let mut cache_dir = install::ensure_reference(reference, &workspace)?;
             cache_dir = cache_dir.join("specman.json");
             let nested = load_manifest(&cache_dir)
                 .map_err(|err| SpecmanError::Dependency(format!("{cache_dir:?}: {err}")))?;
@@ -272,8 +272,8 @@ impl<L: WorkspaceLocator> FilesystemDependencyMapper<L> {
             )));
         }
 
-        for (reference, _kind) in references_of(project) {
-            let mut cache_dir = install::ensure_reference(&reference, &workspace)?;
+        for reference in install::references_of(project) {
+            let mut cache_dir = install::ensure_reference(reference, &workspace)?;
             cache_dir = cache_dir.join("specman.json");
             let nested = load_manifest(&cache_dir)
                 .map_err(|err| SpecmanError::Dependency(format!("{cache_dir:?}: {err}")))?;
@@ -346,36 +346,5 @@ fn summarize_project(
         },
         metadata,
         resolved_path: resolved_path.map(|p| p.to_string_lossy().to_string()),
-    }
-}
-
-fn references_of(
-    project: &SpecManProjectManifest,
-) -> Vec<(crate::manifest::GitReference, ArtifactKind)> {
-    match (project.spec(), project.impl_()) {
-        (Some(SpecProject { references, .. }), None) => references
-            .iter()
-            .cloned()
-            .map(|r| (r, ArtifactKind::Specification))
-            .collect(),
-        (
-            None,
-            Some(ImplProject {
-                implements,
-                utilizes,
-            }),
-        ) => {
-            let mut out: Vec<(crate::manifest::GitReference, ArtifactKind)> = implements
-                .iter()
-                .map(|e| (e.ref_.clone(), ArtifactKind::Specification))
-                .collect();
-            out.extend(
-                utilizes
-                    .iter()
-                    .map(|u| (u.ref_.clone(), ArtifactKind::Implementation)),
-            );
-            out
-        }
-        _ => Vec::new(),
     }
 }

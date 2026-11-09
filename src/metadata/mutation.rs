@@ -10,7 +10,7 @@ use crate::metadata::update_model::ManifestUpdate;
 /// Applies a `ManifestUpdate` to a `specman.json` file in place and returns the full updated
 /// project manifest.
 ///
-/// Before writing, any newly added git references (references, implements, utilizes, and override
+/// Before writing, any newly added git references (references, implements, and override
 /// `ref` values) are validated by resolving tag references to commit hashes via `git ls-remote`,
 /// per the metadata-mutation requirement to "reuse git-reference resolution" before applying edits.
 pub fn apply_manifest_update(
@@ -61,22 +61,6 @@ pub fn apply_manifest_update(
             }
             m.impl_.implements.retain(|e| {
                 !up.remove_implements
-                    .iter()
-                    .any(|alias| alias == e.ref_.alias.as_str())
-            });
-            for entry in &up.add_utilizes {
-                validate_reference(&entry.ref_)?;
-                if !m
-                    .impl_
-                    .utilizes
-                    .iter()
-                    .any(|e| e.ref_.alias == entry.ref_.alias)
-                {
-                    m.impl_.utilizes.push(entry.clone());
-                }
-            }
-            m.impl_.utilizes.retain(|e| {
-                !up.remove_utilizes
                     .iter()
                     .any(|alias| alias == e.ref_.alias.as_str())
             });
