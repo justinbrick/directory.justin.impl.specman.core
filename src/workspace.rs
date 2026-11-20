@@ -95,7 +95,7 @@ pub fn workspace_relative_path(root: &Path, absolute: &Path) -> Option<String> {
     normalized_absolute
         .strip_prefix(&normalized_root)
         .ok()
-        .map(|relative| to_forward_slashes(relative))
+        .map(to_forward_slashes)
 }
 
 #[derive(Clone, Debug)]
@@ -328,13 +328,12 @@ impl FilesystemWorkspaceLocator {
 
 impl WorkspaceLocator for FilesystemWorkspaceLocator {
     fn workspace(&self) -> Result<WorkspacePaths, SpecmanError> {
-        if let Some(paths) = self.cache.lock().unwrap().clone() {
-            if paths.root().is_dir()
-                && paths.root().join(".git").is_dir()
-                && paths.root().join("specman.json").is_file()
-            {
-                return Ok(paths);
-            }
+        if let Some(paths) = self.cache.lock().unwrap().clone()
+            && paths.root().is_dir()
+            && paths.root().join(".git").is_dir()
+            && paths.root().join("specman.json").is_file()
+        {
+            return Ok(paths);
         }
 
         let discovered = self.refresh()?;

@@ -259,13 +259,16 @@ pub fn load_lockfile(workspace: &WorkspacePaths) -> Result<Option<Lockfile>, Spe
     Ok(Some(lock))
 }
 
+/// A mapping from a reference alias to its `(url, resolved commit hash)` pair.
+type LockedHashes = HashMap<String, (String, String)>;
+
 /// Reads the lockfile and returns, keyed by alias, the (url, resolved hash) for each direct
 /// reference. Returns `None` when no lockfile is present. Detects and reports divergence between
 /// the lockfile and `specman.json`.
 fn locked_hashes(
     workspace: &WorkspacePaths,
     project: &SpecManProjectManifest,
-) -> Result<Option<HashMap<String, (String, String)>>, SpecmanError> {
+) -> Result<Option<LockedHashes>, SpecmanError> {
     let Some(lock) = load_lockfile(workspace)? else {
         return Ok(None);
     };
@@ -417,7 +420,6 @@ pub fn install(
 
     install_recursive(
         project,
-        workspace,
         spec_root,
         project.name(),
         0,
@@ -438,7 +440,6 @@ pub fn install(
 #[allow(clippy::too_many_arguments)]
 fn install_recursive(
     project: &SpecManProjectManifest,
-    workspace: &WorkspacePaths,
     base_dir: PathBuf,
     declaring_alias: &str,
     depth: usize,
@@ -513,7 +514,6 @@ fn install_recursive(
         let nested_spec_root = dest_dir.join("spec");
         install_recursive(
             &nested,
-            workspace,
             nested_spec_root,
             alias,
             depth + 1,

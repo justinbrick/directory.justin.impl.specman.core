@@ -40,7 +40,7 @@ pub fn delete_artifact(
     if blocked && !opts.force {
         return Err(LifecycleError::DeletionBlocked {
             target: target.clone(),
-            dependencies,
+            dependencies: Box::new(dependencies),
         }
         .into());
     }

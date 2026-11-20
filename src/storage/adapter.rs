@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-use crate::graph::tree::{ArtifactId, DependencyTree};
 use crate::core::error::SpecmanError;
+use crate::graph::tree::{ArtifactId, DependencyTree};
 
 pub trait DataModelAdapter: Send + Sync {
     // [ENSURES: entity-datamodeladapter.requirements:CHECK]

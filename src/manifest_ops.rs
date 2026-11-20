@@ -173,12 +173,12 @@ fn validate_spec_project(spec: &serde_json::Map<String, Value>) -> Result<(), Sp
             "specman.json `spec.index` must not be null".into(),
         ));
     }
-    if let Some(index) = spec.get("index") {
-        if !index.is_string() {
-            return Err(SpecmanError::Serialization(
-                "specman.json `spec.index` must be a string".into(),
-            ));
-        }
+    if let Some(index) = spec.get("index")
+        && !index.is_string()
+    {
+        return Err(SpecmanError::Serialization(
+            "specman.json `spec.index` must be a string".into(),
+        ));
     }
     if let Some(references) = spec.get("references") {
         validate_git_reference_array(references, "spec.references")?;
@@ -258,12 +258,12 @@ fn validate_git_reference_entry(value: &Value, field: &str) -> Result<(), Specma
         }
     }
 
-    if let Some(alias) = obj.get("alias").and_then(Value::as_str) {
-        if is_reserved_alias(alias) {
-            return Err(SpecmanError::Serialization(format!(
-                "specman.json `{field}.alias` is a reserved device name"
-            )));
-        }
+    if let Some(alias) = obj.get("alias").and_then(Value::as_str)
+        && is_reserved_alias(alias)
+    {
+        return Err(SpecmanError::Serialization(format!(
+            "specman.json `{field}.alias` is a reserved device name"
+        )));
     }
 
     let url = obj.get("url").and_then(Value::as_str).unwrap_or_default();

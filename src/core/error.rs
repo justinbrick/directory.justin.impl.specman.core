@@ -11,7 +11,7 @@ pub enum LifecycleError {
     #[error("deletion blocked for {target}")]
     DeletionBlocked {
         target: ArtifactId,
-        dependencies: DependencyTree,
+        dependencies: Box<DependencyTree>,
     },
     #[error("deletion plan target mismatch: request={requested}, plan={planned}")]
     PlanTargetMismatch {

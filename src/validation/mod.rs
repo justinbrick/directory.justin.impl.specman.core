@@ -295,15 +295,15 @@ pub fn validate_workspace_status(
     let mut artifact_status = ArtifactStatus::default();
     let mut cycle_errors = Vec::new();
 
-    if config.references {
-        if let Some(body) = project_body(workspace, &manifest).filter(|path| path.is_file()) {
-            let options = ReferenceValidationOptions::default();
-            match validate_references(workspace, &body, &options) {
-                Ok(result) => artifact_status.reference_errors.extend(result.errors),
-                Err(_) => artifact_status
-                    .reference_errors
-                    .push(unresolved_dependency_issue(&artifact_id, &body)),
-            }
+    if config.references
+        && let Some(body) = project_body(workspace, &manifest).filter(|path| path.is_file())
+    {
+        let options = ReferenceValidationOptions::default();
+        match validate_references(workspace, &body, &options) {
+            Ok(result) => artifact_status.reference_errors.extend(result.errors),
+            Err(_) => artifact_status
+                .reference_errors
+                .push(unresolved_dependency_issue(&artifact_id, &body)),
         }
     }
 
@@ -316,19 +316,20 @@ pub fn validate_workspace_status(
         }
     }
 
-    if config.compliance && manifest.is_impl() {
-        if let Ok(constraints) = governing_constraints(workspace, &manifest) {
-            let tags = scan_source_root(workspace.root())?;
-            let report = generate_report(
-                artifact_id.clone(),
-                artifact_id.clone(),
-                workspace.root().to_path_buf(),
-                &constraints,
-                tags,
-            );
-            artifact_status.compliance_missing = report.missing;
-            artifact_status.compliance_orphans = report.orphans;
-        }
+    if config.compliance
+        && manifest.is_impl()
+        && let Ok(constraints) = governing_constraints(workspace, &manifest)
+    {
+        let tags = scan_source_root(workspace.root())?;
+        let report = generate_report(
+            artifact_id.clone(),
+            artifact_id.clone(),
+            workspace.root().to_path_buf(),
+            &constraints,
+            tags,
+        );
+        artifact_status.compliance_missing = report.missing;
+        artifact_status.compliance_orphans = report.orphans;
     }
 
     let has_errors = !artifact_status.structure_errors.is_empty()

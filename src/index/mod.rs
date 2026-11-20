@@ -147,10 +147,10 @@ pub fn build_workspace_index(workspace: &WorkspacePaths) -> Result<WorkspaceInde
     };
 
     let key = index.artifacts[0].key.clone();
-    if let Some(body_path) = body_path.filter(|path| path.is_file()) {
-        if let Ok(body) = std::fs::read_to_string(&body_path) {
-            extract_structure(body, &key, &mut index);
-        }
+    if let Some(body_path) = body_path.filter(|path| path.is_file())
+        && let Ok(body) = std::fs::read_to_string(&body_path)
+    {
+        extract_structure(body, &key, &mut index);
     }
 
     Ok(index)

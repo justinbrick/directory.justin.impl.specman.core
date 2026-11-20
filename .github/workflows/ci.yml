@@ -41,11 +41,10 @@ jobs:
       - name: Test
         run: cargo test --all-targets
 
-  # Lints run as non-blocking checks: the codebase currently carries pre-existing
-  # `clippy` warnings and `rustfmt` diffs that should be triaged separately from the
-  # test gate so that a failing test never goes unnoticed.
+  # Lints run alongside the test gate. The codebase is clippy-clean and rustfmt-clean,
+  # so these failures should be treated as hard failures.
   lint:
-    name: Lint (non-blocking)
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -57,9 +56,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Clippy
-        continue-on-error: true
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Check formatting
-        continue-on-error: true
         run: cargo fmt --all --check

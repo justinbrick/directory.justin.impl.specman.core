@@ -40,7 +40,7 @@ impl Default for HttpsValidationOptions {
 }
 
 /// Transitive traversal options.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TransitiveValidationOptions {
     /// Whether to validate linked documents beyond the source artifact.
     pub enabled: bool,
@@ -48,29 +48,11 @@ pub struct TransitiveValidationOptions {
     pub max_documents: usize,
 }
 
-impl Default for TransitiveValidationOptions {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            max_documents: 0,
-        }
-    }
-}
-
 /// Configuration for the reference-validation capability.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ReferenceValidationOptions {
     pub https: HttpsValidationOptions,
     pub transitive: TransitiveValidationOptions,
-}
-
-impl Default for ReferenceValidationOptions {
-    fn default() -> Self {
-        Self {
-            https: HttpsValidationOptions::default(),
-            transitive: TransitiveValidationOptions::default(),
-        }
-    }
 }
 
 /// Classification of a discovered link destination.
@@ -164,33 +146,41 @@ pub fn validate_reference_content(
     content: &str,
     options: &ReferenceValidationOptions,
 ) -> ReferenceValidationResult {
-    let mut references = Vec::new();
-    let mut errors = Vec::new();
-    let mut warnings = Vec::new();
-    let mut visited = BTreeSet::new();
+    let mut collector = ValidationCollector::new();
 
-    validate_reference_content_inner(
-        workspace,
-        source_path,
-        content,
-        options,
-        &mut references,
-        &mut errors,
-        &mut warnings,
-        &mut visited,
-    );
+    validate_reference_content_inner(workspace, source_path, content, options, &mut collector);
 
-    let status = if errors.is_empty() {
+    let status = if collector.errors.is_empty() {
         crate::validation::StatusResult::Pass
     } else {
         crate::validation::StatusResult::Fail
     };
 
     ReferenceValidationResult {
-        references,
-        errors,
-        warnings,
+        references: collector.references,
+        errors: collector.errors,
+        warnings: collector.warnings,
         status,
+    }
+}
+
+/// Mutable state accumulated while validating a Markdown artifact and (transitively) any
+/// linked documents.
+struct ValidationCollector {
+    references: Vec<DiscoveredReference>,
+    errors: Vec<ReferenceValidationIssue>,
+    warnings: Vec<ReferenceValidationIssue>,
+    visited: BTreeSet<PathBuf>,
+}
+
+impl ValidationCollector {
+    fn new() -> Self {
+        Self {
+            references: Vec::new(),
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            visited: BTreeSet::new(),
+        }
     }
 }
 
@@ -199,10 +189,7 @@ fn validate_reference_content_inner(
     source_path: &Path,
     content: &str,
     options: &ReferenceValidationOptions,
-    references: &mut Vec<DiscoveredReference>,
-    errors: &mut Vec<ReferenceValidationIssue>,
-    warnings: &mut Vec<ReferenceValidationIssue>,
-    visited: &mut BTreeSet<PathBuf>,
+    collector: &mut ValidationCollector,
 ) {
     let root = workspace.root();
     let source_dir = source_path.parent().unwrap_or(root);
@@ -210,7 +197,7 @@ fn validate_reference_content_inner(
     for link in crate::markdown::parse_links(content) {
         let destination = link.destination.as_str();
         let destination_kind = classify_destination(destination);
-        references.push(DiscoveredReference {
+        collector.references.push(DiscoveredReference {
             destination: destination.to_string(),
             line: Some(link.line),
             column: Some(link.column),
@@ -222,12 +209,9 @@ fn validate_reference_content_inner(
                 // When transitive validation is enabled, follow workspace Markdown links.
                 if options.transitive.enabled
                     && destination_kind == ReferenceDestinationKind::WorkspaceFilesystem
+                    && let Some(target) = resolve_filesystem_link(destination, source_dir, root)
                 {
-                    if let Some(target) = resolve_filesystem_link(destination, source_dir, root) {
-                        follow_transitive(
-                            workspace, &target, options, references, errors, warnings, visited,
-                        );
-                    }
+                    follow_transitive(workspace, &target, options, collector);
                 }
             }
             Err((issue_type, non_fatal)) => {
@@ -239,9 +223,9 @@ fn validate_reference_content_inner(
                     column: Some(link.column),
                 };
                 if non_fatal {
-                    warnings.push(issue);
+                    collector.warnings.push(issue);
                 } else {
-                    errors.push(issue);
+                    collector.errors.push(issue);
                 }
             }
         }
@@ -272,22 +256,20 @@ fn resolve_filesystem_link(destination: &str, source_dir: &Path, root: &Path) ->
 
 /// Recursively validates a linked Markdown document, bounded by `max_documents` and protected
 /// against cycles.
-#[allow(clippy::too_many_arguments)]
 fn follow_transitive(
     workspace: &WorkspacePaths,
     target: &Path,
     options: &ReferenceValidationOptions,
-    references: &mut Vec<DiscoveredReference>,
-    errors: &mut Vec<ReferenceValidationIssue>,
-    warnings: &mut Vec<ReferenceValidationIssue>,
-    visited: &mut BTreeSet<PathBuf>,
+    collector: &mut ValidationCollector,
 ) {
     // `max_documents == 0` is treated as "no limit" only when transitive is enabled with an
     // explicit non-zero cap; otherwise stop once we've already visited the cap.
-    if options.transitive.max_documents > 0 && visited.len() >= options.transitive.max_documents {
+    if options.transitive.max_documents > 0
+        && collector.visited.len() >= options.transitive.max_documents
+    {
         return;
     }
-    if !visited.insert(target.to_path_buf()) {
+    if !collector.visited.insert(target.to_path_buf()) {
         return;
     }
 
@@ -296,9 +278,7 @@ fn follow_transitive(
         Err(_) => return,
     };
 
-    validate_reference_content_inner(
-        workspace, target, &content, options, references, errors, warnings, visited,
-    );
+    validate_reference_content_inner(workspace, target, &content, options, collector);
 }
 
 fn classify_destination(destination: &str) -> ReferenceDestinationKind {
@@ -338,20 +318,21 @@ fn validate_destination(
     }
 
     // Re-check the boundary against the canonicalized path when possible.
-    if let Ok(canonical) = std::fs::canonicalize(&target_path) {
-        if !canonical.starts_with(root) {
-            return Err((ReferenceIssueType::WorkspaceBoundaryViolation, false));
-        }
+    if let Ok(canonical) = std::fs::canonicalize(&target_path)
+        && !canonical.starts_with(root)
+    {
+        return Err((ReferenceIssueType::WorkspaceBoundaryViolation, false));
     }
 
     if !target_path.is_file() {
         return Err((ReferenceIssueType::MissingFile, false));
     }
 
-    if let Some(fragment) = fragment {
-        if is_markdown(&target_path) && !heading_exists(&target_path, &fragment) {
-            return Err((ReferenceIssueType::UnknownFragment, false));
-        }
+    if let Some(fragment) = fragment
+        && is_markdown(&target_path)
+        && !heading_exists(&target_path, &fragment)
+    {
+        return Err((ReferenceIssueType::UnknownFragment, false));
     }
 
     Ok(())

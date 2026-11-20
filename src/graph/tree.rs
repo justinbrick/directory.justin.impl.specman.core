@@ -174,10 +174,10 @@ impl<L: WorkspaceLocator> FilesystemDependencyMapper<L> {
         workspace: &WorkspacePaths,
         alias: &str,
     ) -> Result<PathBuf, SpecmanError> {
-        if let Some(lock) = crate::install::load_lockfile(workspace)? {
-            if let Some(entry) = lock.references.iter().find(|e| e.alias == alias) {
-                return Ok(workspace.root().join(&entry.path).join("specman.json"));
-            }
+        if let Some(lock) = crate::install::load_lockfile(workspace)?
+            && let Some(entry) = lock.references.iter().find(|e| e.alias == alias)
+        {
+            return Ok(workspace.root().join(&entry.path).join("specman.json"));
         }
         Ok(workspace
             .root()
